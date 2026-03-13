@@ -9,13 +9,15 @@ const PRELOAD_THRESHOLD = 2; // fetch a new card when fewer than this remain
 
 async function fetchCard(): Promise<CardData> {
   const res = await fetch("/api/generate-card");
-  if (!res.ok) throw new Error("Failed to fetch card");
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to fetch card");
+  return data;
 }
 
 export default function Home() {
   const [deck, setDeck] = useState<CardData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [score, setScore] = useState(0);
   const [fetching, setFetching] = useState(false);
 
@@ -37,11 +39,17 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const cards = await Promise.all(
-        Array.from({ length: DECK_SIZE }, () => fetchCard())
-      );
-      setDeck(cards);
-      setLoading(false);
+      setLoadError(null);
+      try {
+        const cards = await Promise.all(
+          Array.from({ length: DECK_SIZE }, () => fetchCard())
+        );
+        setDeck(cards);
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : "Failed to load cards");
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
@@ -90,6 +98,11 @@ export default function Home() {
           <div className="absolute inset-0 rounded-2xl bg-white/5 border border-white/10 flex flex-col items-center justify-center gap-4">
             <div className="w-10 h-10 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin" />
             <p className="text-indigo-300 text-sm">Generating cards…</p>
+          </div>
+        ) : loadError ? (
+          <div className="absolute inset-0 rounded-2xl bg-red-950/40 border border-red-500/30 flex flex-col items-center justify-center gap-3 px-6 text-center">
+            <p className="text-red-300 text-sm font-medium">⚠ Could not load cards</p>
+            <p className="text-red-400/80 text-xs">{loadError}</p>
           </div>
         ) : deck.length === 0 ? (
           <div className="absolute inset-0 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">

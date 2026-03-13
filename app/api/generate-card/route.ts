@@ -98,8 +98,14 @@ Return ONLY valid JSON in this exact shape, no extra text:
     return NextResponse.json(card);
   } catch (err) {
     console.error("generate-card error:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    const isCredits = message.includes("credit balance");
     return NextResponse.json(
-      { error: "Failed to generate card" },
+      {
+        error: isCredits
+          ? "Anthropic API credit balance too low — add credits at console.anthropic.com"
+          : "Failed to generate card",
+      },
       { status: 500 }
     );
   }
