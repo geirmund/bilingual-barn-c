@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import type { CardData } from "@/app/api/generate-card/route";
 
@@ -10,14 +10,52 @@ interface FlashCardProps {
   isTop: boolean;
 }
 
-// Deterministic but varied image seed per card so each card looks different
-function imageUrl(card: CardData, width = 480, height = 320) {
+type ImageState =
+  | { status: "loading" }
+  | { status: "ready"; url: string }
+  | { status: "error" };
+
+function picsumFallback(card: CardData) {
   const seed = encodeURIComponent(`${card.noun_en}-${card.verb_en}`);
-  return `https://picsum.photos/seed/${seed}/${width}/${height}`;
+  return `https://picsum.photos/seed/${seed}/480/320`;
+}
+
+function useCardImage(card: CardData, isTop: boolean): ImageState {
+  const [state, setState] = useState<ImageState>({ status: "loading" });
+
+  useEffect(() => {
+    // Only fetch DALL-E image when this card is (or becomes) top
+    if (!isTop) return;
+    setState({ status: "loading" });
+
+    const controller = new AbortController();
+    const query = encodeURIComponent(card.imageQuery);
+
+    fetch(`/api/generate-image?q=${query}`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.url) {
+          setState({ status: "ready", url: data.url });
+        } else {
+          // fallback=true means no OpenAI key — use picsum
+          setState({ status: "ready", url: picsumFallback(card) });
+        }
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          setState({ status: "ready", url: picsumFallback(card) });
+        }
+      });
+
+    return () => controller.abort();
+  }, [card, isTop]);
+
+  return state;
 }
 
 export default function FlashCard({ card, index, isTop }: FlashCardProps) {
   const [flipped, setFlipped] = useState(false);
+  const imageState = useCardImage(card, isTop);
 
   // Stack cards behind top card with slight offset
   const stackOffset = index * 4;
@@ -52,15 +90,32 @@ export default function FlashCard({ card, index, isTop }: FlashCardProps) {
             style={{ backfaceVisibility: "hidden" }}
           >
             {/* Image section */}
-            <div className="relative flex-1 min-h-0">
-              <Image
-                src={imageUrl(card)}
-                alt={card.imageQuery}
-                fill
-                className="object-cover"
-                sizes="(max-width: 480px) 100vw, 480px"
-                priority={isTop}
-              />
+            <div className="relative flex-1 min-h-0 bg-slate-100">
+              {imageState.status === "loading" ? (
+                // Shimmer skeleton while DALL-E generates
+                <div className="absolute inset-0 overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 animate-shimmer bg-[length:200%_100%]" />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                    <div className="w-8 h-8 border-3 border-indigo-300 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-slate-400 text-xs">Generating image…</p>
+                  </div>
+                </div>
+              ) : imageState.status === "ready" ? (
+                <Image
+                  src={imageState.url}
+                  alt={card.imageQuery}
+                  fill
+                  className="object-cover"
+                  sizes="(max-width: 480px) 100vw, 480px"
+                  priority={isTop}
+                  unoptimized={imageState.url.includes("blob.core.windows.net")}
+                />
+              ) : (
+                // error state — show a subtle placeholder
+                <div className="absolute inset-0 bg-slate-200 flex items-center justify-center">
+                  <span className="text-slate-400 text-sm">No image</span>
+                </div>
+              )}
               {/* Gradient overlay at bottom of image */}
               <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
             </div>
