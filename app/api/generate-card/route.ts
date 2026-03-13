@@ -4,6 +4,9 @@ import fs from "fs";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch from "node-fetch";
 
+// Disable Next.js route caching so each request generates a fresh card
+export const dynamic = "force-dynamic";
+
 function getApiKey(): string | undefined {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   // Fallback: read from Claude Code session token file (dev environment)
@@ -52,13 +55,20 @@ export interface CardData {
 export async function GET() {
   try {
     const client = getClient();
+    // Pick a random category to nudge Claude toward variety
+    const categories = [
+      "animals", "food and cooking", "sports", "nature", "vehicles",
+      "household objects", "occupations", "music", "weather", "technology",
+    ];
+    const category = categories[Math.floor(Math.random() * categories.length)];
+
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 256,
       messages: [
         {
           role: "user",
-          content: `Generate a simple English noun and an action verb that naturally goes with it (e.g. "dog" + "fetch", "chef" + "cook", "bird" + "fly").
+          content: `Generate a simple English noun and an action verb related to the category "${category}" that naturally go together (e.g. "dog" + "fetch", "chef" + "cook", "bird" + "fly"). Pick something specific and interesting — avoid the most common examples.
 Then provide the Norwegian translation of each word separately, and a short illustrative sentence in both languages.
 
 Return ONLY valid JSON in this exact shape, no extra text:
