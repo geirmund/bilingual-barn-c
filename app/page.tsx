@@ -2,47 +2,59 @@
 
 import { useCallback, useEffect, useState } from "react";
 import FlashCard from "@/components/FlashCard";
-import type { CardData } from "@/app/api/generate-card/route";
+import type { CardData, CardMode } from "@/app/api/generate-card/route";
 
-const DECK_SIZE = 5; // cards pre-loaded in the deck
-const PRELOAD_THRESHOLD = 2; // fetch a new card when fewer than this remain
+const DECK_SIZE = 5;
+const PRELOAD_THRESHOLD = 2;
 
-async function fetchCard(): Promise<CardData> {
-  const res = await fetch("/api/generate-card");
+const MODES: { value: CardMode; label: string; description: string }[] = [
+  { value: "nouns", label: "Nouns & Verbs", description: "Everyday objects and actions" },
+  { value: "adjectives", label: "Opposites", description: "Pairs of opposite adjectives" },
+  { value: "questions", label: "Questions", description: "Common travel phrases" },
+];
+
+async function fetchCard(mode: CardMode): Promise<CardData> {
+  const res = await fetch(`/api/generate-card?mode=${mode}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to fetch card");
   return data;
 }
 
 export default function Home() {
+  const [mode, setMode] = useState<CardMode>("nouns");
   const [deck, setDeck] = useState<CardData[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [score, setScore] = useState(0);
   const [fetching, setFetching] = useState(false);
 
-  // Add a new card to the bottom of the deck
-  const addCard = useCallback(async () => {
-    if (fetching) return;
-    setFetching(true);
-    try {
-      const card = await fetchCard();
-      setDeck((d) => [...d, card]);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setFetching(false);
-    }
-  }, [fetching]);
+  const addCard = useCallback(
+    async (currentMode: CardMode) => {
+      if (fetching) return;
+      setFetching(true);
+      try {
+        const card = await fetchCard(currentMode);
+        setDeck((d) => [...d, card]);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setFetching(false);
+      }
+    },
+    [fetching]
+  );
 
-  // Initial load: fill deck
+  // Load deck whenever mode changes
   useEffect(() => {
+    setDeck([]);
+    setLoading(true);
+    setLoadError(null);
+    setScore(0);
+
     (async () => {
-      setLoading(true);
-      setLoadError(null);
       try {
         const cards = await Promise.all(
-          Array.from({ length: DECK_SIZE }, () => fetchCard())
+          Array.from({ length: DECK_SIZE }, () => fetchCard(mode))
         );
         setDeck(cards);
       } catch (e) {
@@ -51,34 +63,47 @@ export default function Home() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [mode]);
 
   // Replenish deck when running low
   useEffect(() => {
     if (!loading && deck.length < PRELOAD_THRESHOLD) {
-      addCard();
+      addCard(mode);
     }
-  }, [deck.length, loading, addCard]);
+  }, [deck.length, loading, addCard, mode]);
 
   const handleNext = useCallback(() => {
-    setDeck((d) => d.slice(1)); // discard top card
+    setDeck((d) => d.slice(1));
     setScore((s) => s + 1);
   }, []);
 
   const topCard = deck[0];
-  // Show at most 3 cards in the visual stack
   const visibleDeck = deck.slice(0, 3);
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center p-4 gap-8">
+    <main className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center p-4 gap-6">
       {/* Header */}
       <div className="text-center">
-        <h1 className="text-3xl font-bold text-white tracking-tight">
-          Bilingual Barn
-        </h1>
-        <p className="text-indigo-300 text-sm mt-1">
-          English → Norwegian flashcards
-        </p>
+        <h1 className="text-3xl font-bold text-white tracking-tight">Bilingual Barn</h1>
+        <p className="text-indigo-300 text-sm mt-1">English → Norwegian flashcards</p>
+      </div>
+
+      {/* Mode selector */}
+      <div className="flex gap-2 flex-wrap justify-center">
+        {MODES.map((m) => (
+          <button
+            key={m.value}
+            onClick={() => setMode(m.value)}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+              mode === m.value
+                ? "bg-indigo-500 text-white shadow-lg"
+                : "bg-white/10 text-indigo-200 hover:bg-white/20"
+            }`}
+            title={m.description}
+          >
+            {m.label}
+          </button>
+        ))}
       </div>
 
       {/* Score */}
@@ -87,8 +112,7 @@ export default function Home() {
           Cards seen: <span className="font-bold text-indigo-300">{score}</span>
         </div>
         <div className="bg-white/10 rounded-full px-4 py-1.5 text-white">
-          In deck:{" "}
-          <span className="font-bold text-indigo-300">{deck.length}</span>
+          In deck: <span className="font-bold text-indigo-300">{deck.length}</span>
         </div>
       </div>
 
@@ -109,12 +133,11 @@ export default function Home() {
             <p className="text-indigo-300">Loading next card…</p>
           </div>
         ) : (
-          // Render stack — bottom cards first so top card renders last (on top)
           [...visibleDeck].reverse().map((card, reversedIndex) => {
             const index = visibleDeck.length - 1 - reversedIndex;
             return (
               <FlashCard
-                key={`${card.noun_en}-${card.verb_en}-${index}`}
+                key={`${index}-${"noun_en" in card ? card.noun_en : "adj_en" in card ? card.adj_en : card.question_en}`}
                 card={card}
                 index={index}
                 isTop={index === 0}
@@ -134,9 +157,7 @@ export default function Home() {
           Next card →
         </button>
         {fetching && (
-          <p className="text-indigo-400 text-xs animate-pulse">
-            Generating more cards…
-          </p>
+          <p className="text-indigo-400 text-xs animate-pulse">Generating more cards…</p>
         )}
       </div>
 
@@ -144,8 +165,7 @@ export default function Home() {
       {topCard && !loading && (
         <p className="text-indigo-400/60 text-xs text-center max-w-xs">
           Tap the card to flip and reveal the Norwegian translation. Press{" "}
-          <strong className="text-indigo-400">Next card</strong> when you&apos;re
-          ready to move on.
+          <strong className="text-indigo-400">Next card</strong> when you&apos;re ready to move on.
         </p>
       )}
     </main>
