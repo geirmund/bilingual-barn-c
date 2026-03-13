@@ -1,7 +1,43 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
+import fs from "fs";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import nodeFetch from "node-fetch";
 
-const client = new Anthropic();
+function getApiKey(): string | undefined {
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+  // Fallback: read from Claude Code session token file (dev environment)
+  const tokenFile = process.env.CLAUDE_SESSION_INGRESS_TOKEN_FILE;
+  if (tokenFile) {
+    try {
+      return fs.readFileSync(tokenFile, "utf8").trim();
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
+function getClient() {
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
+  // Provide a proxy-aware fetch so requests go through the egress gateway
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const customFetch: any = proxyUrl
+    ? (url: string, init?: RequestInit) =>
+        nodeFetch(url, {
+          ...init,
+          agent: new HttpsProxyAgent(proxyUrl),
+        } as Parameters<typeof nodeFetch>[1])
+    : undefined;
+
+  const token = getApiKey();
+  // Session ingress tokens (sk-ant-si-...) use Bearer auth, not x-api-key
+  const isSessionToken = token?.startsWith("sk-ant-si-");
+  return new Anthropic({
+    ...(isSessionToken ? { authToken: token } : { apiKey: token }),
+    fetch: customFetch,
+  });
+}
 
 export interface CardData {
   noun_en: string;
@@ -15,6 +51,7 @@ export interface CardData {
 
 export async function GET() {
   try {
+    const client = getClient();
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 256,
